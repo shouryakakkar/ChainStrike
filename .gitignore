@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+# chainstrike/ is a package; setup_tools downloads binaries here
+chainstrike/tools/bin/
+chainstrike/tools/nikto/
+chainstrike/tools/perl/
+
+# Reports
+reports/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs & IDEs
+*.log
+.vscode/
