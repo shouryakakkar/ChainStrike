@@ -97,6 +97,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--skip-nikto",    action="store_true", help="Skip the Nikto phase.")
     p.add_argument(
+        "--full-scan",
+        action="store_true",
+        help=(
+            "Scan all 65535 ports with Nmap instead of just the top 1000. "
+            "Much slower — not recommended inside Docker on Windows."
+        ),
+    )
+    p.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose / debug logging.",
@@ -117,9 +125,9 @@ def _section(title: str) -> None:
 
 # ─── Phase runners ────────────────────────────────────────────────────────────
 
-def _phase_nmap(target: str, mock: bool) -> tuple[list, str]:
-    _section("Phase 1/3 | Nmap  (full port scan + service detection)")
-    raw = run_nmap(target, mock=mock)
+def _phase_nmap(target: str, mock: bool, full_scan: bool = False) -> tuple[list, str]:
+    _section("Phase 1/3 | Nmap  (port scan + service detection)")
+    raw = run_nmap(target, mock=mock, full_scan=full_scan)
     if not raw:
         logger.warning("Nmap returned no output.")
         return [], "ERROR - no output"
@@ -183,7 +191,7 @@ def main() -> int:
     if args.skip_nmap:
         tool_status["nmap"] = "SKIPPED (--skip-nmap)"
     else:
-        findings, status = _phase_nmap(args.target, args.mock)
+        findings, status = _phase_nmap(args.target, args.mock, full_scan=args.full_scan)
         all_findings.extend(findings)
         tool_status["nmap"] = status
 

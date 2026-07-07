@@ -185,8 +185,15 @@ def _run(cmd: list[str], timeout: int = 3600, env: dict | None = None) -> tuple[
 
 # ─── Nmap ────────────────────────────────────────────────────────────────────
 
-def run_nmap(target: str, mock: bool = False) -> str:
-    """Run a full Nmap port scan with service/version detection."""
+def run_nmap(target: str, mock: bool = False, full_scan: bool = False) -> str:
+    """
+    Run an Nmap port scan with service/version detection.
+
+    By default scans the top 1000 most common ports (-T4, fast).
+    Pass full_scan=True to scan all 65535 ports (-p-), which is much
+    slower — especially inside Docker on Windows where raw SYN scans
+    are unavailable and nmap falls back to TCP connect.
+    """
     if mock:
         logger.info("[MOCK] Returning mock Nmap output.")
         print(NMAP_MOCK_OUTPUT)
@@ -201,8 +208,16 @@ def run_nmap(target: str, mock: bool = False) -> str:
         )
         return ""
 
+    if full_scan:
+        port_args = ["-p-", "--defeat-rst-ratelimit"]
+        logger.info("Nmap: full port scan (all 65535 ports) — this may take several minutes.")
+    else:
+        port_args = ["--top-ports", "1000"]
+        logger.info("Nmap: scanning top 1000 ports (use --full-scan for all ports).")
+
     print("\n[*] Running Nmap...\n")
-    stdout, stderr, code = _run([tool, "-sV", "-sC", "-p-", "--open", "-T4", target])
+    cmd = [tool, "-sV", "-sC", "--open", "-T4", "--host-timeout", "5m"] + port_args + [target]
+    stdout, stderr, code = _run(cmd)
     if code not in (0, 1):
         logger.warning("nmap exited with code %d", code)
     return stdout or stderr
