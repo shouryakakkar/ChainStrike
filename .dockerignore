@@ -1,0 +1,28 @@
+# .dockerignore – keep the Docker build context lean
+
+# Git
+.git
+.gitignore
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Downloaded tool binaries (installed fresh inside the image)
+chainstrike/tools/bin/
+chainstrike/tools/nikto/
+chainstrike/tools/perl/
+
+# Reports generated on the host
+reports/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+*.log
