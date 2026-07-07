@@ -39,16 +39,18 @@ cd ChainStrike
 # Build the image (one-time, ~5 min)
 docker build -t chainstrike .
 
-# Run a scan — reports saved to ./reports/ on your host
+# Run a scan (Linux / macOS)
 docker run --rm --network host -v $(pwd)/reports:/app/reports chainstrike --target 192.168.1.100
 ```
 
-> **Windows (PowerShell)**:
+> **Windows (PowerShell)** — use `${PWD}` in quotes and drop `--network host` (not supported on Docker Desktop for Windows):
 > ```powershell
-> docker run --rm --network host -v ${PWD}/reports:/app/reports chainstrike --target 192.168.1.100
+> docker run --rm -v "${PWD}\reports:/app/reports" chainstrike --target 192.168.1.100
 > ```
 
-### 2. Using Docker Compose (easier)
+> **Note on `--network host`:** On Linux this gives nmap raw socket access for the most accurate scans. On Windows/macOS Docker runs inside a Linux VM so `--network host` is not available — scans still work but go through the VM's NAT interface.
+
+### 2. Using Docker Compose (easier, recommended on Windows)
 
 ```bash
 # Build
@@ -61,9 +63,7 @@ docker compose run --rm chainstrike --target 192.168.1.100
 docker compose run --rm chainstrike --target demo --mock
 ```
 
-### Why `--network host`?
-
-`nmap` needs raw socket access for accurate port scanning. `--network host` passes your real network interface into the container so scans work exactly like they would natively. On **macOS/Windows**, Docker runs inside a Linux VM — `--network host` connects to the VM's network. Scans against LAN IPs (e.g. `192.168.x.x`) still work via the VM bridge.
+> Docker Compose handles volume path differences between Windows and Linux automatically — no manual path quoting needed.
 
 ---
 
