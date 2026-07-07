@@ -1,0 +1,21 @@
+# docker-compose.yml – ChainStrike convenience wrapper
+#
+# Usage:
+#   docker compose run --rm chainstrike --target 192.168.1.1
+#   docker compose run --rm chainstrike --target demo --mock
+#
+# Reports are saved to ./reports/ on your host machine.
+
+services:
+  chainstrike:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: chainstrike:latest
+    # host networking gives nmap full raw-socket access for accurate scans
+    network_mode: host
+    volumes:
+      # Reports land on your host machine at ./reports/
+      - ./reports:/app/reports
+    # Default: show help. Override with: docker compose run --rm chainstrike --target <IP>
+    command: ["--help"]
