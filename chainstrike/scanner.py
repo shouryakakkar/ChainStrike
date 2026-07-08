@@ -128,12 +128,15 @@ def resolve_wordlist(user_supplied: str) -> str:
 
 # ─── Subprocess helper ────────────────────────────────────────────────────────
 
-def _stream_reader(stream, chunks: list) -> None:
-    """Thread target: drain a stream line-by-line."""
+def _stream_reader(stream, chunks: list, prefix: str = "") -> None:
+    """Thread target: drain a stream line-by-line and echo to stdout."""
     try:
         for line in stream:
             chunks.append(line)
-            sys.stdout.write(line)
+            if prefix:
+                sys.stdout.write(prefix + line)
+            else:
+                sys.stdout.write(line)
             sys.stdout.flush()
     except Exception:
         pass
@@ -144,6 +147,7 @@ def _run(cmd: list[str], timeout: int = 3600, env: dict | None = None) -> tuple[
     Run *cmd* with concurrent stdout/stderr draining.
     Returns (stdout_text, stderr_text, returncode).
     Pass *env* to override the subprocess environment (used for bundled Perl).
+    On timeout, kills the process and returns whatever output was captured so far.
     """
     logger.debug("Running: %s", " ".join(str(c) for c in cmd))
     try:
@@ -161,22 +165,24 @@ def _run(cmd: list[str], timeout: int = 3600, env: dict | None = None) -> tuple[
         out_chunks: list[str] = []
         err_chunks: list[str] = []
 
-        t_out = threading.Thread(target=_stream_reader, args=(proc.stdout, out_chunks), daemon=True)
-        t_err = threading.Thread(target=_stream_reader, args=(proc.stderr, err_chunks), daemon=True)
+        t_out = threading.Thread(target=_stream_reader, args=(proc.stdout, out_chunks, ""), daemon=True)
+        t_err = threading.Thread(target=_stream_reader, args=(proc.stderr, err_chunks, ""), daemon=True)
         t_out.start()
         t_err.start()
 
+        timed_out = False
         try:
             proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             proc.kill()
-            logger.error("Command timed out: %s", " ".join(str(c) for c in cmd))
-            return "", "Timeout expired", -1
+            timed_out = True
+            logger.error("Command timed out after %ds: %s", timeout, " ".join(str(c) for c in cmd))
         finally:
             t_out.join(timeout=5)
             t_err.join(timeout=5)
 
-        return "".join(out_chunks), "".join(err_chunks), proc.returncode
+        # Return partial results on timeout so we don't lose any findings
+        return "".join(out_chunks), "".join(err_chunks), -1 if timed_out else proc.returncode
 
     except FileNotFoundError:
         logger.error("Tool not found: %s", cmd[0])
@@ -248,20 +254,22 @@ def run_gobuster(target: str, wordlist: str, mock: bool = False) -> str:
 
     url = target if target.startswith("http") else f"http://{target}"
 
-    print("\n[*] Running Gobuster...\n")
+    print("\n[*] Running Gobuster (this may take a few minutes)...\n")
     stdout, stderr, code = _run(
         [
             tool, "dir",
             "-u", url,
             "-w", resolved,
-            "-t", "20",
+            "-t", "10",          # 10 threads — stable through Docker NAT
             "--timeout", "5s",   # per-request HTTP timeout
             "--no-error",
-            "-q",
+            # note: no -q so progress is visible in real time
         ],
-        timeout=300,  # hard 5-minute cap on the entire gobuster run
+        timeout=900,  # hard 15-minute cap
     )
-    if code not in (0, 1):
+    if code == -1:
+        logger.warning("Gobuster timed out after 15 minutes — partial results returned.")
+    elif code not in (0, 1):
         logger.warning("gobuster exited with code %d", code)
     return stdout
 
