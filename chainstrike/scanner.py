@@ -249,14 +249,18 @@ def run_gobuster(target: str, wordlist: str, mock: bool = False) -> str:
     url = target if target.startswith("http") else f"http://{target}"
 
     print("\n[*] Running Gobuster...\n")
-    stdout, stderr, code = _run([
-        tool, "dir",
-        "-u", url,
-        "-w", resolved,
-        "-t", "20",
-        "--no-error",
-        "-q",
-    ])
+    stdout, stderr, code = _run(
+        [
+            tool, "dir",
+            "-u", url,
+            "-w", resolved,
+            "-t", "20",
+            "--timeout", "5s",   # per-request HTTP timeout
+            "--no-error",
+            "-q",
+        ],
+        timeout=300,  # hard 5-minute cap on the entire gobuster run
+    )
     if code not in (0, 1):
         logger.warning("gobuster exited with code %d", code)
     return stdout
@@ -325,12 +329,12 @@ def run_nikto(target: str, mock: bool = False) -> str:
         if tool.endswith(".pl"):
             # Build environment for Strawberry Perl Portable if needed
             env = _perl_env(perl)
-            cmd = [perl, tool, "-h", target]
+            cmd = [perl, tool, "-h", target, "-maxtime", "300"]
         else:
             env = None
-            cmd = [tool, "-h", target]
+            cmd = [tool, "-h", target, "-maxtime", "300"]
 
-        stdout, stderr, code = _run(cmd, env=env)
+        stdout, stderr, code = _run(cmd, env=env, timeout=360)  # 6-min hard cap
         if code not in (0, 1):
             logger.warning("nikto exited with code %d", code)
         return stdout or stderr
