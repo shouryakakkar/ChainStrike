@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import logging
 
 from chainstrike.mock_data import NMAP_MOCK_OUTPUT, GOBUSTER_MOCK_OUTPUT, NIKTO_MOCK_OUTPUT
@@ -142,12 +143,29 @@ def _stream_reader(stream, chunks: list, prefix: str = "") -> None:
         pass
 
 
-def _run(cmd: list[str], timeout: int = 3600, env: dict | None = None) -> tuple[str, str, int]:
+def _heartbeat(label: str, stop_event: threading.Event, interval: int = 30) -> None:
+    """Thread target: print a live elapsed-time ticker while a tool is running."""
+    start = time.time()
+    while not stop_event.wait(interval):
+        elapsed = int(time.time() - start)
+        mins, secs = divmod(elapsed, 60)
+        ts = f"{mins}m{secs:02d}s" if mins else f"{secs}s"
+        print(f"  ⏳  {label} still running... ({ts} elapsed)", flush=True)
+
+
+def _run(
+    cmd: list[str],
+    timeout: int = 3600,
+    env: dict | None = None,
+    heartbeat_label: str = "",
+    heartbeat_interval: int = 30,
+) -> tuple[str, str, int]:
     """
     Run *cmd* with concurrent stdout/stderr draining.
     Returns (stdout_text, stderr_text, returncode).
-    Pass *env* to override the subprocess environment (used for bundled Perl).
-    On timeout, kills the process and returns whatever output was captured so far.
+    - Pass *env* to override the subprocess environment.
+    - Pass *heartbeat_label* to emit a periodic "still running" ticker.
+    - On timeout, kills the process and returns whatever output was captured so far.
     """
     logger.debug("Running: %s", " ".join(str(c) for c in cmd))
     try:
@@ -164,11 +182,20 @@ def _run(cmd: list[str], timeout: int = 3600, env: dict | None = None) -> tuple[
 
         out_chunks: list[str] = []
         err_chunks: list[str] = []
+        stop_heartbeat = threading.Event()
 
         t_out = threading.Thread(target=_stream_reader, args=(proc.stdout, out_chunks, ""), daemon=True)
         t_err = threading.Thread(target=_stream_reader, args=(proc.stderr, err_chunks, ""), daemon=True)
         t_out.start()
         t_err.start()
+
+        if heartbeat_label:
+            t_hb = threading.Thread(
+                target=_heartbeat,
+                args=(heartbeat_label, stop_heartbeat, heartbeat_interval),
+                daemon=True,
+            )
+            t_hb.start()
 
         timed_out = False
         try:
@@ -178,10 +205,11 @@ def _run(cmd: list[str], timeout: int = 3600, env: dict | None = None) -> tuple[
             timed_out = True
             logger.error("Command timed out after %ds: %s", timeout, " ".join(str(c) for c in cmd))
         finally:
+            stop_heartbeat.set()
             t_out.join(timeout=5)
             t_err.join(timeout=5)
 
-        # Return partial results on timeout so we don't lose any findings
+        # Return partial results on timeout so we don’t lose any findings
         return "".join(out_chunks), "".join(err_chunks), -1 if timed_out else proc.returncode
 
     except FileNotFoundError:
@@ -222,8 +250,16 @@ def run_nmap(target: str, mock: bool = False, full_scan: bool = False) -> str:
         logger.info("Nmap: scanning top 1000 ports (use --full-scan for all ports).")
 
     print("\n[*] Running Nmap...\n")
-    cmd = [tool, "-sV", "-sC", "--open", "-T4", "--host-timeout", "5m"] + port_args + [target]
-    stdout, stderr, code = _run(cmd)
+    cmd = [
+        tool,
+        "-sV", "--version-intensity", "5",  # lighter version probing (0-9, default 7)
+        "-sC",                                # default scripts for service info
+        "-n",                                 # skip DNS resolution — faster
+        "--open",
+        "-T4",
+        "--host-timeout", "5m",
+    ] + port_args + [target]
+    stdout, stderr, code = _run(cmd, heartbeat_label="Nmap", heartbeat_interval=20)
     if code not in (0, 1):
         logger.warning("nmap exited with code %d", code)
     return stdout or stderr
@@ -260,12 +296,14 @@ def run_gobuster(target: str, wordlist: str, mock: bool = False) -> str:
             tool, "dir",
             "-u", url,
             "-w", resolved,
-            "-t", "10",          # 10 threads — stable through Docker NAT
+            "-t", "20",          # 20 threads — gobuster handles concurrency well
             "--timeout", "5s",   # per-request HTTP timeout
-            "--no-error",
-            # note: no -q so progress is visible in real time
+            "--retry",           # retry on transient failures
+            "--retry-attempts", "2",
         ],
-        timeout=900,  # hard 15-minute cap
+        timeout=900,
+        heartbeat_label=f"Gobuster ({url})",
+        heartbeat_interval=30,
     )
     if code == -1:
         logger.warning("Gobuster timed out after 15 minutes — partial results returned.")
@@ -342,8 +380,14 @@ def run_nikto(target: str, mock: bool = False) -> str:
             env = None
             cmd = [tool, "-h", target, "-maxtime", "300"]
 
-        stdout, stderr, code = _run(cmd, env=env, timeout=360)  # 6-min hard cap
-        if code not in (0, 1):
+        stdout, stderr, code = _run(
+            cmd, env=env, timeout=360,
+            heartbeat_label=f"Nikto ({target})",
+            heartbeat_interval=30,
+        )
+        if code == -1:
+            logger.warning("Nikto timed out — partial results returned.")
+        elif code not in (0, 1):
             logger.warning("nikto exited with code %d", code)
         return stdout or stderr
 
